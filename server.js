@@ -37,41 +37,78 @@ if (missingVars.length > 0) {
 
 // Webhook verification endpoint
 app.get('/webhook', (req, res) => {
+    console.log('📞 Webhook verification request received');
+    console.log('Query params:', req.query);
+    
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
-
+    
+    console.log(`Mode: ${mode}, Token: ${token}, Challenge: ${challenge}`);
+    console.log(`Expected token: ${VERIFY_TOKEN}`);
+    
+    // Check if a token and mode were sent
     if (mode && token) {
+        // Check the mode and token sent are correct
         if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-            console.log('Webhook verified successfully!');
+            console.log('✅ Webhook verified successfully!');
             res.status(200).send(challenge);
         } else {
+            console.log('❌ Webhook verification failed!');
+            console.log(`Expected token: ${VERIFY_TOKEN}, Received: ${token}`);
             res.status(403).send('Forbidden');
         }
+    } else {
+        console.log('❌ Missing mode or token in verification request');
+        res.status(400).send('Bad Request');
     }
 });
 
 // Webhook endpoint for receiving messages
 app.post('/webhook', (req, res) => {
-    const body = req.body;
-
-    if (body.object === 'whatsapp_business_account') {
-        body.entry.forEach(entry => {
-            const changes = entry.changes;
-            changes.forEach(change => {
-                if (change.field === 'messages') {
-                    const messages = change.value.messages;
-                    if (messages) {
-                        messages.forEach(message => {
-                            handleIncomingMessage(message, change.value.metadata.phone_number_id);
-                        });
-                    }
+    console.log('📨 Incoming webhook POST request');
+    console.log('Headers:', req.headers);
+    console.log('Body:', JSON.stringify(req.body, null, 2));
+    
+    try {
+        const body = req.body;
+        
+        // Check if this is a WhatsApp API webhook event
+        if (body.object) {
+            if (body.entry && 
+                body.entry[0] &&
+                body.entry[0].changes && 
+                body.entry[0].changes[0] && 
+                body.entry[0].changes[0].field === 'messages') {
+                
+                const change = body.entry[0].changes[0];
+                const value = change.value;
+                
+                console.log('📱 Processing WhatsApp message...');
+                
+                // Handle incoming messages
+                if (value.messages && value.messages[0]) {
+                    const message = value.messages[0];
+                    console.log(`📩 Message received from ${message.from}: ${JSON.stringify(message)}`);
+                    handleIncomingMessage(message, value.metadata.phone_number_id);
                 }
-            });
-        });
-        res.status(200).send('EVENT_RECEIVED');
-    } else {
-        res.status(404).send('Not Found');
+                
+                // Handle message status updates
+                if (value.statuses && value.statuses[0]) {
+                    console.log('📊 Message status update:', value.statuses[0]);
+                }
+            }
+            
+            // Always return 200 OK for webhook events
+            res.status(200).send('EVENT_RECEIVED');
+        } else {
+            console.log('❌ Not a WhatsApp webhook event');
+            res.status(404).send('Not Found');
+        }
+    } catch (error) {
+        console.error('❌ Error processing webhook:', error);
+        console.error('Stack trace:', error.stack);
+        res.status(500).send('Internal Server Error');
     }
 });
 
@@ -240,6 +277,20 @@ async function sendInteractiveMessage(to, phoneNumberId) {
         console.error('Error sending interactive message:', error.response?.data || error.message);
     }
 }
+
+// Root endpoint - fixes 502 Bad Gateway from ngrok
+app.get('/', (req, res) => {
+    res.status(200).json({
+        message: 'WhatsApp Business Chatbot API',
+        status: 'running',
+        version: '1.0.0',
+        endpoints: {
+            health: '/health',
+            webhook: '/webhook (GET for verification, POST for messages)'
+        },
+        timestamp: new Date().toISOString()
+    });
+});
 
 // Health check endpoint
 app.get('/health', (req, res) => {
